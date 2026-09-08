@@ -46,6 +46,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("...");
   const [q, setQ] = useState("");
+  const [noSubs, setNoSubs] = useState(null); // { checking, checked, total, ids: Set }
+  const [onlyNoSubs, setOnlyNoSubs] = useState(false);
 
   useEffect(() => {
     jget("sections").then((d) => {
@@ -89,7 +91,26 @@ export default function App() {
     setBusy(true); setSel({});
     let eps = asArr(await jget("getEpisods/" + se.id)) || [];
     if (!eps.length) eps = asArr(await jget("getSeries/" + se.id)) || [];
-    setNav({ level: "episodes", list: eps, title: (seriesName || "") + " " + se.name }); setBusy(false);
+    setNav({ level: "episodes", list: eps, title: (seriesName || "") + " " + se.name });
+    setNoSubs(null); setOnlyNoSubs(false); setBusy(false);
+  }
+
+  async function findMissingSubs(list) {
+    setNoSubs({ checking: true, checked: 0, total: list.length, ids: new Set() });
+    const missing = new Set();
+    let checked = 0;
+    const queue = [...list];
+    const worker = async () => {
+      while (queue.length) {
+        const ep = queue.shift();
+        const pd = await jget("getPlayData/" + ep.id);
+        if (!pd || !pd.tracks || pd.tracks.length === 0) missing.add(ep.id);
+        checked++;
+        setNoSubs({ checking: true, checked, total: list.length, ids: new Set(missing) });
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+    setNoSubs({ checking: false, checked: list.length, total: list.length, ids: missing });
   }
 
   async function playEpisode(ep, index) {
@@ -110,7 +131,7 @@ export default function App() {
 
   function back() {
     if (play) return setPlay(null);
-    if (nav) { setNav(null); setSel({}); return; }
+    if (nav) { setNav(null); setSel({}); setNoSubs(null); setOnlyNoSubs(false); return; }
     setStack(stack.slice(0, -1)); setItems(null); setSubs(null); setQ("");
   }
 
@@ -192,21 +213,59 @@ export default function App() {
                   className="text-sm border border-slate-600 disabled:opacity-40 text-slate-300 rounded px-3 py-1.5">تصدير قائمة</button>
               </div>
             )}
+            {isEpisodes && nav.list.length > 0 && (
+              <div className="flex gap-2 flex-wrap items-center border border-slate-800 rounded p-2">
+                <button disabled={noSubs?.checking} onClick={() => findMissingSubs(nav.list)}
+                  className="text-sm bg-amber-600 disabled:opacity-40 text-white rounded px-3 py-1.5">
+                  {noSubs?.checking ? `جارِ الفحص ${noSubs.checked}/${noSubs.total}...` : "فحص الحلقات بدون ترجمة"}
+                </button>
+                {noSubs && !noSubs.checking && (
+                  <>
+                    <span className="text-xs text-slate-400">
+                      {noSubs.ids.size} حلقة بدون ترجمة من {noSubs.total}
+                    </span>
+                    {noSubs.ids.size > 0 && (
+                      <>
+                        <label className="text-sm flex items-center gap-2">
+                          <input type="checkbox" checked={onlyNoSubs}
+                            onChange={(e) => setOnlyNoSubs(e.target.checked)} />
+                          إظهار غير المترجمة فقط
+                        </label>
+                        <button onClick={() => setSel(Object.fromEntries(
+                          nav.list.filter((e) => noSubs.ids.has(e.id)).map((e) => [e.id, true])))}
+                          className="text-sm border border-amber-600 text-amber-400 rounded px-3 py-1.5">
+                          تحديد غير المترجمة
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-              {nav.list.map((x, idx) => (
-                <div key={x.id} className="bg-slate-900 border border-slate-800 rounded p-3 flex items-center gap-3">
-                  {isEpisodes && (
-                    <input type="checkbox" checked={!!sel[x.id]}
-                      onChange={(e) => setSel({ ...sel, [x.id]: e.target.checked })} />
-                  )}
-                  <button onClick={() => (isEpisodes ? playEpisode(x, idx) : openSeason(x, nav.title))}
-                    className="flex-1 text-right hover:text-emerald-400">
-                    <p className="text-slate-100 text-sm">{x.name}</p>
-                    {!isEpisodes && <p className="text-xs text-slate-500">{x.type}</p>}
-                  </button>
-                </div>
-              ))}
+              {nav.list.map((x, idx) => {
+                const missing = noSubs && !noSubs.checking && noSubs.ids.has(x.id);
+                if (isEpisodes && onlyNoSubs && !missing) return null;
+                return (
+                  <div key={x.id} className={"bg-slate-900 border rounded p-3 flex items-center gap-3 " +
+                    (missing ? "border-amber-600" : "border-slate-800")}>
+                    {isEpisodes && (
+                      <input type="checkbox" checked={!!sel[x.id]}
+                        onChange={(e) => setSel({ ...sel, [x.id]: e.target.checked })} />
+                    )}
+                    <button onClick={() => (isEpisodes ? playEpisode(x, idx) : openSeason(x, nav.title))}
+                      className="flex-1 text-right hover:text-emerald-400">
+                      <p className="text-slate-100 text-sm">{x.name}</p>
+                      {!isEpisodes && <p className="text-xs text-slate-500">{x.type}</p>}
+                      {missing && <p className="text-xs text-amber-500">بدون ترجمة</p>}
+                    </button>
+                  </div>
+                );
+              })}
               {nav.list.length === 0 && <p className="text-slate-500 text-sm">لا توجد حلقات.</p>}
+              {isEpisodes && onlyNoSubs && noSubs && noSubs.ids.size === 0 && (
+                <p className="text-slate-500 text-sm">لا توجد حلقات بدون ترجمة.</p>
+              )}
             </div>
           </>
         )}
