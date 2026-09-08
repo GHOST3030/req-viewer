@@ -10,6 +10,12 @@ const dl = (id) => `${SERVER}/api/downloadItem/${id}/video`;
 const mxPlayerLink = (id, title) =>
   `intent:${streamAbs(id)}#Intent;package=com.mxtech.videoplayer.ad;S.title=${encodeURIComponent(title || "")};end`;
 
+const externalSubSearchSites = [
+  { name: "OpenSubtitles", url: (q) => `https://www.opensubtitles.org/en/search2/sublanguageid-ara/moviename-${encodeURIComponent(q)}` },
+  { name: "Subscene", url: (q) => `https://subscene.com/subtitles/searchbytitle?query=${encodeURIComponent(q)}` },
+  { name: "Google", url: (q) => `https://www.google.com/search?q=${encodeURIComponent(q + " مترجم subtitle vtt srt")}` },
+];
+
 const jget = async (p) => {
   const r = await fetch(API + p);
   const t = await r.text();
@@ -237,6 +243,18 @@ export default function App() {
             <input readOnly value={streamAbs(play.src)} onFocus={(e) => e.target.select()}
               className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-slate-400"
               dir="ltr" />
+
+            {play.tracks.length === 0 && (
+              <div className="flex gap-2 flex-wrap items-center border border-slate-800 rounded p-2">
+                <span className="text-xs text-slate-500">بحث عن ترجمة خارجية:</span>
+                {externalSubSearchSites.map((site) => (
+                  <a key={site.name} href={site.url(play.title)} target="_blank" rel="noreferrer"
+                    className="text-xs border border-slate-600 text-slate-300 rounded px-3 py-1.5 hover:border-emerald-600">
+                    {site.name}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
