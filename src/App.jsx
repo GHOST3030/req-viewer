@@ -4,8 +4,11 @@ const SERVER = "http://10.10.10.10";
 const API = "/api/";
 const img = (id) => API + "ItemImage/" + id;
 const stream = (id) => API + "stream/" + id;
+const streamAbs = (id) => `${SERVER}${API}stream/${id}`;
 const sub = (src) => API + "subtitle/" + src + ".vtt";
 const dl = (id) => `${SERVER}/api/downloadItem/${id}/video`;
+const mxPlayerLink = (id, title) =>
+  `intent:${streamAbs(id)}#Intent;package=com.mxtech.videoplayer.ad;S.title=${encodeURIComponent(title || "")};end`;
 
 const jget = async (p) => {
   const r = await fetch(API + p);
@@ -219,6 +222,8 @@ export default function App() {
 
             <div className="flex gap-2 flex-wrap items-center">
               <a href={dl(play.src)} className="text-sm bg-sky-600 text-white rounded px-4 py-2">تنزيل</a>
+              <a href={mxPlayerLink(play.src, play.title)}
+                className="text-sm bg-orange-600 text-white rounded px-4 py-2">فتح في MX Player</a>
               {play.tracks.length === 0 && <span className="text-xs text-slate-500">لا توجد ترجمة</span>}
               {play.sources.length > 1 && play.sources.map((s) => (
                 <button key={s.src} onClick={() => setPlay({ ...play, src: s.src })}
@@ -228,6 +233,10 @@ export default function App() {
                 </button>
               ))}
             </div>
+
+            <input readOnly value={streamAbs(play.src)} onFocus={(e) => e.target.select()}
+              className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-slate-400"
+              dir="ltr" />
           </div>
         )}
 
