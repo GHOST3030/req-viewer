@@ -10,6 +10,13 @@ const dl = (id) => `${SERVER}/api/downloadItem/${id}/video`;
 const mxPlayerLink = (id, title) =>
   `intent:${streamAbs(id)}#Intent;package=com.mxtech.videoplayer.ad;S.title=${encodeURIComponent(title || "")};end`;
 
+function srtToVtt(text) {
+  const body = text.replace(/\r/g, "").replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, "$1.$2");
+  return "WEBVTT\n\n" + body;
+}
+
+const trackUrl = (t) => (t.local ? t.url : sub(t.src));
+
 const externalSubSearchSites = [
   { name: "OpenSubtitles", url: (q) => `https://www.opensubtitles.org/en/search2/sublanguageid-ara/moviename-${encodeURIComponent(q)}` },
   { name: "Subscene", url: (q) => `https://subscene.com/subtitles/searchbytitle?query=${encodeURIComponent(q)}` },
@@ -167,6 +174,14 @@ export default function App() {
     setBusy(false);
   }
 
+  async function addLocalSubtitle(file) {
+    if (!file) return;
+    const text = await file.text();
+    const vtt = /^\s*WEBVTT/i.test(text) ? text : srtToVtt(text);
+    const url = URL.createObjectURL(new Blob([vtt], { type: "text/vtt" }));
+    setPlay((p) => ({ ...p, tracks: [{ local: true, url, label: file.name }, ...p.tracks] }));
+  }
+
   const epList = nav?.level === "episodes" ? nav.list : null;
   const hasNext = play && epList && play.epIndex != null && play.epIndex + 1 < epList.length;
   const hasPrev = play && epList && play.epIndex != null && play.epIndex - 1 >= 0;
@@ -209,7 +224,7 @@ export default function App() {
               onEnded={() => hasNext && goEp(1)}>
               <source src={stream(play.src)} />
               {play.tracks.map((t, i) => (
-                <track key={i} kind="subtitles" src={sub(t.src)}
+                <track key={t.local ? t.url : t.src} kind="subtitles" src={trackUrl(t)}
                   srcLang={t.srclang || t.srcLang || "ar"} label={t.label || "عربي"} default={i === 0} />
               ))}
             </video>
@@ -230,6 +245,11 @@ export default function App() {
               <a href={dl(play.src)} className="text-sm bg-sky-600 text-white rounded px-4 py-2">تنزيل</a>
               <a href={mxPlayerLink(play.src, play.title)}
                 className="text-sm bg-orange-600 text-white rounded px-4 py-2">فتح في MX Player</a>
+              <label className="text-sm bg-slate-800 text-slate-200 rounded px-4 py-2 cursor-pointer">
+                إضافة ملف ترجمة
+                <input type="file" accept=".srt,.vtt" className="hidden"
+                  onChange={(e) => { addLocalSubtitle(e.target.files?.[0]); e.target.value = ""; }} />
+              </label>
               {play.tracks.length === 0 && <span className="text-xs text-slate-500">لا توجد ترجمة</span>}
               {play.sources.length > 1 && play.sources.map((s) => (
                 <button key={s.src} onClick={() => setPlay({ ...play, src: s.src })}
