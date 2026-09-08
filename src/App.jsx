@@ -12,6 +12,26 @@ const jget = async (p) => {
   const t = await r.text();
   try { return JSON.parse(t); } catch { return null; }
 };
+
+async function findSubtitleOnServer(candidates) {
+  for (const c of candidates.filter(Boolean)) {
+    try {
+      const r = await fetch(sub(c));
+      if (!r.ok) continue;
+      const t = await r.text();
+      if (t.trim().toUpperCase().startsWith("WEBVTT")) return c;
+    } catch { /* candidate not available, try next */ }
+  }
+  return null;
+}
+
+const LAST_STATE_KEY = "reqviewer:lastState";
+const saveLastState = (s) => {
+  try { localStorage.setItem(LAST_STATE_KEY, JSON.stringify(s)); } catch { /* ignore quota/serialize errors */ }
+};
+const loadLastState = () => {
+  try { return JSON.parse(localStorage.getItem(LAST_STATE_KEY)); } catch { return null; }
+};
 const asArr = (d) =>
   Array.isArray(d) ? d
   : d && typeof d === "object" ? Object.values(d).map(asArr).find(Boolean) || null
@@ -36,11 +56,13 @@ function exportList(eps) {
 }
 
 export default function App() {
+  const [restored] = useState(() => loadLastState());
+
   const [roots, setRoots] = useState([]);
-  const [stack, setStack] = useState([]);
-  const [subs, setSubs] = useState(null);
-  const [items, setItems] = useState(null);
-  const [nav, setNav] = useState(null);
+  const [stack, setStack] = useState(restored?.stack || []);
+  const [subs, setSubs] = useState(restored?.subs || null);
+  const [items, setItems] = useState(restored?.items || null);
+  const [nav, setNav] = useState(restored?.nav || null);
   const [play, setPlay] = useState(null);
   const [sel, setSel] = useState({});
   const [busy, setBusy] = useState(false);
@@ -48,6 +70,7 @@ export default function App() {
   const [q, setQ] = useState("");
   const [noSubs, setNoSubs] = useState(null); // { checking, checked, total, ids: Set }
   const [onlyNoSubs, setOnlyNoSubs] = useState(false);
+  const [foundSubs, setFoundSubs] = useState({}); // { [episodeId]: subtitleSrcId }
 
   useEffect(() => {
     jget("sections").then((d) => {
@@ -56,10 +79,15 @@ export default function App() {
     }).catch((e) => setStatus("خطأ: " + e.message));
   }, []);
 
+  useEffect(() => {
+    saveLastState({ stack, subs, items, nav });
+  }, [stack, subs, items, nav]);
+
   const cur = stack[stack.length - 1] || null;
 
   async function openSection(s) {
     setStack([...stack, s]); setItems(null); setSubs(null); setNav(null); setSel({}); setBusy(true); setQ("");
+    setNoSubs(null); setOnlyNoSubs(false); setFoundSubs({});
     const sd = await jget("sections/0/100/" + s.id);
     const secs = (asArr(sd) || []).filter((x) => x.is_hidden !== "yes");
     if (secs.length) { setSubs(secs); setBusy(false); return; }
@@ -92,21 +120,26 @@ export default function App() {
     let eps = asArr(await jget("getEpisods/" + se.id)) || [];
     if (!eps.length) eps = asArr(await jget("getSeries/" + se.id)) || [];
     setNav({ level: "episodes", list: eps, title: (seriesName || "") + " " + se.name });
-    setNoSubs(null); setOnlyNoSubs(false); setBusy(false);
+    setNoSubs(null); setOnlyNoSubs(false); setFoundSubs({}); setBusy(false);
   }
 
   async function findMissingSubs(list) {
     setNoSubs({ checking: true, checked: 0, total: list.length, ids: new Set() });
     const missing = new Set();
+    const found = {};
     let checked = 0;
     const queue = [...list];
     const worker = async () => {
       while (queue.length) {
         const ep = queue.shift();
         const pd = await jget("getPlayData/" + ep.id);
-        if (!pd || !pd.tracks || pd.tracks.length === 0) missing.add(ep.id);
+        if (!pd || !pd.tracks || pd.tracks.length === 0) {
+          const src = await findSubtitleOnServer([pd?.sources?.[0]?.src, ep.id]);
+          if (src) found[ep.id] = src; else missing.add(ep.id);
+        }
         checked++;
         setNoSubs({ checking: true, checked, total: list.length, ids: new Set(missing) });
+        setFoundSubs((f) => ({ ...f, ...found }));
       }
     };
     await Promise.all(Array.from({ length: 4 }, worker));
@@ -116,8 +149,12 @@ export default function App() {
   async function playEpisode(ep, index) {
     setBusy(true);
     const pd = await jget("getPlayData/" + ep.id);
-    setPlay(pd?.sources?.length ? toPlay(pd, ep.name, ep.id, index)
-                                : { src: ep.id, sources: [], tracks: [], title: ep.name, poster: ep.id, epIndex: index });
+    const p = pd?.sources?.length ? toPlay(pd, ep.name, ep.id, index)
+                                  : { src: ep.id, sources: [], tracks: [], title: ep.name, poster: ep.id, epIndex: index };
+    if (p.tracks.length === 0 && foundSubs[ep.id]) {
+      p.tracks = [{ src: foundSubs[ep.id], label: "ترجمة (مكتشفة)" }];
+    }
+    setPlay(p);
     setBusy(false);
   }
 
@@ -131,7 +168,7 @@ export default function App() {
 
   function back() {
     if (play) return setPlay(null);
-    if (nav) { setNav(null); setSel({}); setNoSubs(null); setOnlyNoSubs(false); return; }
+    if (nav) { setNav(null); setSel({}); setNoSubs(null); setOnlyNoSubs(false); setFoundSubs({}); return; }
     setStack(stack.slice(0, -1)); setItems(null); setSubs(null); setQ("");
   }
 
@@ -223,6 +260,7 @@ export default function App() {
                   <>
                     <span className="text-xs text-slate-400">
                       {noSubs.ids.size} حلقة بدون ترجمة من {noSubs.total}
+                      {Object.keys(foundSubs).length > 0 && ` (تم العثور على ترجمة لـ ${Object.keys(foundSubs).length})`}
                     </span>
                     {noSubs.ids.size > 0 && (
                       <>
@@ -245,10 +283,11 @@ export default function App() {
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
               {nav.list.map((x, idx) => {
                 const missing = noSubs && !noSubs.checking && noSubs.ids.has(x.id);
+                const discovered = foundSubs[x.id];
                 if (isEpisodes && onlyNoSubs && !missing) return null;
                 return (
                   <div key={x.id} className={"bg-slate-900 border rounded p-3 flex items-center gap-3 " +
-                    (missing ? "border-amber-600" : "border-slate-800")}>
+                    (missing ? "border-amber-600" : discovered ? "border-emerald-600" : "border-slate-800")}>
                     {isEpisodes && (
                       <input type="checkbox" checked={!!sel[x.id]}
                         onChange={(e) => setSel({ ...sel, [x.id]: e.target.checked })} />
@@ -258,6 +297,7 @@ export default function App() {
                       <p className="text-slate-100 text-sm">{x.name}</p>
                       {!isEpisodes && <p className="text-xs text-slate-500">{x.type}</p>}
                       {missing && <p className="text-xs text-amber-500">بدون ترجمة</p>}
+                      {discovered && <p className="text-xs text-emerald-500">تم العثور على ترجمة</p>}
                     </button>
                   </div>
                 );

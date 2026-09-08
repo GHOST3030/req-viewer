@@ -27,3 +27,10 @@ Open http://localhost:5173
 - Series: item -> `/api/getSeries/{id}` (seasons) -> episodes -> play.
 - Posters: `/api/ItemImage/{id}`.
 - Each video has an "Open in VLC" button (Android intent).
+- The episodes list has a scan button that checks each episode for a subtitle
+  track and, when one is missing, probes `/api/subtitle/{id}.vtt` on the same
+  server (trying the video source id, then the episode id) for a matching
+  `.vtt` file before giving up.
+- The app remembers the last section/series/season list you were browsing
+  (in `localStorage`) and restores it on the next visit instead of starting
+  from the sections list.
